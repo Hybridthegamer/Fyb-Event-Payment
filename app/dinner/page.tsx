@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
@@ -11,8 +11,8 @@ import {
   Registration,
   PaymentRecord,
 } from '@/lib/firestoreHelpers';
-import { initiatePaystackPayment } from '@/lib/paystack';
-import { formatNaira, generatePaystackRef, getMatricLast4 } from '@/lib/utils';
+// Note: recordPayment will be called by the bank transfer handler in Step 2.
+import { formatNaira, getMatricLast4 } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import Navbar from '@/components/Navbar';
 import PaymentStepper from '@/components/PaymentStepper';
@@ -167,83 +167,17 @@ export default function DinnerPage() {
     }
   };
 
-  // --- Payment handler ---
-  const handlePayNow = useCallback(async (amountToPay: number, type: 'full' | 'instalment') => {
-    if (!user) return;
-
-    // Refresh registration from Firestore for latest data
-    let reg = existingReg;
-    if (!reg) {
-      reg = await getRegistration(user.uid);
-      if (!reg) { toast.error('Registration not found. Please restart.'); return; }
-      setExistingReg(reg);
-    }
-
-    setProcessingPayment(true);
-    const reference = generatePaystackRef(user.uid);
-
-    try {
-      await initiatePaystackPayment({
-        key: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY!,
-        email: user.email ?? reg.email,
-        amount: amountToPay * 100,
-        currency: 'NGN',
-        ref: reference,
-        metadata: {
-          matricNumber: reg.matricNumber,
-          fullName: reg.fullName,
-          numPlusOnes: reg.numPlusOnes,
-        },
-        onSuccess: async (transaction) => {
-          const toastId = toast.loading('Verifying payment...');
-          try {
-            const res = await fetch('/api/verify-payment', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ reference: transaction.reference }),
-            });
-            const data = await res.json();
-
-            if (!data.verified) {
-              toast.error('Payment could not be verified. Please contact support.', { id: toastId });
-              setProcessingPayment(false);
-              return;
-            }
-
-            const newAmountPaid = (reg!.amountPaid ?? 0) + amountToPay;
-            const payment: Omit<PaymentRecord, 'paidAt'> = {
-              reference: transaction.reference,
-              amount: amountToPay,
-              type,
-            };
-            await recordPayment(user.uid, payment, newAmountPaid, reg!.totalAmount);
-
-            // Refresh registration
-            const updatedReg = await getRegistration(user.uid);
-            if (updatedReg) {
-              setExistingReg(updatedReg);
-              setLatestPayment(updatedReg.payments[updatedReg.payments.length - 1]);
-            }
-
-            toast.success('Payment successful! Generating your ticket...', { id: toastId });
-            setIsReturningPartial(false);
-            setStep(4);
-          } catch {
-            toast.error('Payment recorded but verification failed. Contact support.', { id: toastId });
-          } finally {
-            setProcessingPayment(false);
-          }
-        },
-        onClose: () => {
-          toast('Payment cancelled.', { icon: '❌' });
-          setProcessingPayment(false);
-        },
-      });
-    } catch {
-      toast.error('Failed to initialize payment. Please try again.');
-      setProcessingPayment(false);
-    }
-  }, [user, existingReg]);
+  // ─── PAYMENT STUB ─────────────────────────────────────────
+  // Paystack removed. Bank transfer handler goes here in Step 2.
+  // Expected signature:
+  //   handlePayment(amountInNaira: number): Promise<void>
+  const handlePayment = async (amountInNaira: number): Promise<void> => {
+    console.warn(
+      "Payment handler not yet implemented.",
+      { amountInNaira }
+    );
+  };
+  // ──────────────────────────────────────────────────────────
 
   // Download all tickets
   const handleDownloadAll = async () => {
@@ -539,7 +473,7 @@ export default function DinnerPage() {
                   ← Back
                 </button>
                 <button
-                  onClick={() => handlePayNow(amountToPayNow, paymentMode)}
+                  onClick={() => handlePayment(amountToPayNow)}
                   disabled={processingPayment}
                   className="btn-gold flex-1 py-3 rounded-lg font-inter font-semibold text-sm flex items-center justify-center gap-2"
                 >
@@ -549,7 +483,7 @@ export default function DinnerPage() {
                       Processing...
                     </>
                   ) : (
-                    `Pay ${formatNaira(amountToPayNow)} Now`
+                    `Pay Now`
                   )}
                 </button>
               </div>
@@ -604,7 +538,7 @@ export default function DinnerPage() {
               </div>
 
               <button
-                onClick={() => handlePayNow(continuePayAmount, 'instalment')}
+                onClick={() => handlePayment(continuePayAmount)}
                 disabled={processingPayment}
                 className="btn-gold w-full py-3 rounded-lg font-inter font-semibold text-sm flex items-center justify-center gap-2"
               >
@@ -614,7 +548,7 @@ export default function DinnerPage() {
                     Processing...
                   </>
                 ) : (
-                  `Pay ${formatNaira(continuePayAmount)} Now`
+                  `Pay Now`
                 )}
               </button>
             </div>
