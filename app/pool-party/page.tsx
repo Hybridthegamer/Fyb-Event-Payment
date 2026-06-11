@@ -1,6 +1,6 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import AuthGuard from '@/components/AuthGuard';
 import Navbar from '@/components/Navbar';
 
@@ -13,61 +13,125 @@ export default function PoolPartyPage() {
 }
 
 function PoolPartyContent() {
-  const router = useRouter();
-
   return (
-    <div className="min-h-screen flex flex-col bg-[#2C0A0A]">
-      <Navbar />
+    <div style={{ minHeight: '100vh', background: 'var(--bam-bg)' }}>
+      <Navbar pageLabel="POOL PARTY" />
 
-      <main className="flex-1 flex flex-col items-center justify-center px-4 py-12">
+      <div
+        className="flex flex-col md:flex-row"
+        style={{ minHeight: '100vh', paddingTop: '56px' }}
+      >
+        {/* Left column */}
         <div
-          className="w-full max-w-md rounded-2xl overflow-hidden text-center"
-          style={{
-            background: 'linear-gradient(145deg, #4A1515 0%, #3D1010 100%)',
-            border: '1px solid rgba(201,162,39,0.3)',
-            boxShadow: '0 0 40px rgba(201,162,39,0.12)',
-          }}
+          className="flex-1 flex items-center justify-center"
+          style={{ padding: 'var(--bam-pad)' }}
         >
-          {/* Top gold line */}
-          <div className="h-1 w-full" style={{ background: 'linear-gradient(90deg, #C9A227, #E8C84A)' }} />
-
-          <div className="p-10 flex flex-col items-center gap-5">
-            <div className="text-6xl">🏊</div>
-
-            <h1
-              className="text-3xl sm:text-4xl font-bold text-white"
-              style={{ fontFamily: '"Playfair Display", serif' }}
+          <div style={{ maxWidth: '520px', width: '100%' }}>
+            <p
+              style={{
+                fontFamily: 'var(--bam-font-mono)',
+                fontSize: 'var(--bam-t-micro)',
+                color: 'var(--bam-cream-40)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.22em',
+                marginBottom: 'var(--bam-space-md)',
+              }}
             >
-              FYB POOL PARTY
-            </h1>
-
-            {/* Coming Soon badge */}
-            <div
-              className="px-8 py-3 rounded-full text-base font-bold font-inter tracking-widest"
-              style={{ background: 'linear-gradient(135deg, #C9A227, #E8C84A)', color: '#1A0505' }}
-            >
-              COMING SOON
-            </div>
-
-            <p className="text-sm font-inter leading-relaxed" style={{ color: '#C4A882' }}>
-              Details will be announced soon. Stay tuned for an epic end-of-year celebration!
+              EVENT 02 · POOL PARTY
             </p>
-
-            <div className="w-full h-px" style={{ background: 'rgba(201,162,39,0.2)' }} />
-
-            <button
-              onClick={() => router.push('/')}
-              className="flex items-center gap-2 font-inter text-sm font-medium transition-colors hover:text-[#C9A227]"
-              style={{ color: '#C4A882' }}
+            <h1
+              data-reveal
+              style={{
+                fontFamily: 'var(--bam-font-serif)',
+                fontSize: 'var(--bam-t-display)',
+                color: 'var(--bam-cream-20)',
+                letterSpacing: '-0.02em',
+                lineHeight: 0.9,
+                margin: 0,
+                fontWeight: 400,
+              }}
             >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
-              </svg>
-              Go Back to Events
-            </button>
+              POOL
+            </h1>
+            <h1
+              data-reveal
+              data-reveal-delay="80"
+              style={{
+                fontFamily: 'var(--bam-font-serif)',
+                fontSize: 'var(--bam-t-display)',
+                color: 'var(--bam-cream-20)',
+                letterSpacing: '-0.02em',
+                lineHeight: 0.9,
+                margin: 0,
+                fontWeight: 400,
+              }}
+            >
+              PARTY
+            </h1>
           </div>
         </div>
-      </main>
+
+        {/* Right column */}
+        <div
+          className="flex-1 flex items-center justify-center border-t md:border-t-0 md:border-l"
+          style={{ padding: 'var(--bam-pad)', borderColor: 'var(--bam-border)' }}
+        >
+          <div style={{ maxWidth: '360px', width: '100%' }}>
+            <span
+              data-reveal
+              style={{
+                display: 'inline-block',
+                background: 'var(--bam-surface)',
+                border: '1px solid var(--bam-border)',
+                borderRadius: '9999px',
+                fontFamily: 'var(--bam-font-mono)',
+                fontSize: '0.75rem',
+                color: 'var(--bam-cream-40)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.22em',
+                padding: '12px 32px',
+                marginBottom: 'var(--bam-space-xl)',
+              }}
+            >
+              COMING SOON
+            </span>
+
+            <p
+              style={{
+                fontFamily: 'var(--bam-font-mono)',
+                fontSize: '0.85rem',
+                color: 'var(--bam-cream-40)',
+                marginBottom: 'var(--bam-space-xl)',
+              }}
+            >
+              Details will be announced soon.
+            </p>
+
+            <div style={{ height: '1px', background: 'var(--bam-border)', marginBottom: 'var(--bam-space-xl)' }} />
+
+            <Link href="/">
+              <button
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--bam-cream-40)',
+                  fontFamily: 'var(--bam-font-mono)',
+                  fontSize: 'var(--bam-t-micro)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.15em',
+                  cursor: 'pointer',
+                  padding: 0,
+                  transition: 'color 0.15s ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--bam-cream)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--bam-cream-40)'; }}
+              >
+                ← BACK TO EVENTS
+              </button>
+            </Link>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

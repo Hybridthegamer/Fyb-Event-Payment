@@ -9,7 +9,7 @@ A student-facing payment portal for the National Association of Computing Studen
 - **Framework**: Next.js 14 (App Router)
 - **Auth**: Firebase Authentication (Google Sign-In)
 - **Database**: Firebase Firestore
-- **Payments**: Paystack (inline popup)
+- **Payments**: Bank transfer (Step 2 — pending integration)
 - **Ticket generation**: html2canvas
 - **Styling**: Tailwind CSS
 - **Deployment**: Vercel
@@ -57,21 +57,12 @@ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
 NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abc123
 
-NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY=pk_live_xxxxxxxxxxxxxxxxxxxx
-NEXT_PUBLIC_PAYSTACK_MERCHANT_NAME=NACOS RSU FYB
-PAYSTACK_SECRET_KEY=sk_live_xxxxxxxxxxxxxxxxxxxx
+# ── Payment Integration ──────────────────────────────────────
+# Paystack removed. Add bank transfer env vars here in Step 2.
+# ────────────────────────────────────────────────────────────
 ```
 
-> **Important**: `PAYSTACK_SECRET_KEY` is server-only (no `NEXT_PUBLIC_` prefix). Never expose it to the client.
-
-### 4. Paystack setup
-
-1. Create a [Paystack](https://paystack.com) account.
-2. Get your public and secret keys from Dashboard → Settings → API Keys & Webhooks.
-3. Replace placeholder keys in `.env.local`.
-4. Use `pk_test_...` / `sk_test_...` for testing, `pk_live_...` / `sk_live_...` for production.
-
-### 5. Run locally
+### 4. Run locally
 
 ```bash
 npm run dev
@@ -88,7 +79,11 @@ Open [http://localhost:3000](http://localhost:3000).
 3. Add all environment variables from `.env.local` in Vercel project settings.
 4. Deploy — Vercel auto-detects Next.js.
 
-> The `PAYSTACK_SECRET_KEY` must be set as a Vercel environment variable for the payment verification API route to work in production.
+---
+
+## Payment Integration
+
+The Paystack integration has been removed. A bank transfer payment system will be wired in as Step 2. Do not go live until Step 2 is complete.
 
 ---
 
@@ -113,7 +108,7 @@ app/
   login/page.tsx        → Google Sign-In
   dinner/page.tsx       → FYB Dinner Night (4-step flow)
   pool-party/page.tsx   → Coming Soon
-  api/verify-payment/   → Paystack verification endpoint
+  api/                  → Payment verification (Step 2 pending)
 
 components/
   AuthGuard.tsx         → Auth protection wrapper
@@ -125,7 +120,6 @@ components/
 
 lib/
   firebase.ts           → Firebase init
-  paystack.ts           → Paystack script loader + initiator
   firestoreHelpers.ts   → Firestore CRUD helpers
-  utils.ts              → formatNaira, generateRef, getMatricLast4
+  utils.ts              → formatNaira, getMatricLast4
 ```
