@@ -1,6 +1,24 @@
 import type { Metadata } from 'next';
+import { Instrument_Serif, DM_Mono } from 'next/font/google';
 import './globals.css';
-import { Toaster } from 'react-hot-toast';
+import '@/styles/bam-tokens.css';
+import ClientProviders from '@/components/ClientProviders';
+
+const instrumentSerif = Instrument_Serif({
+  weight: ['400'],
+  style: ['normal', 'italic'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-serif',
+});
+
+const dmMono = DM_Mono({
+  weight: ['300', '400', '500'],
+  style: ['normal', 'italic'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-mono',
+});
 
 export const metadata: Metadata = {
   title: 'NACOS FYB | Event Payment Portal',
@@ -9,29 +27,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        {children}
-        <Toaster
-          position="top-right"
-          gutter={12}
-          toastOptions={{
-            duration: 4000,
-            style: {
-              background: '#3D1010',
-              color: '#fff',
-              border: '1px solid rgba(201, 162, 39, 0.4)',
-              fontFamily: 'Inter, sans-serif',
-              fontSize: '14px',
-            },
-            success: {
-              iconTheme: { primary: '#2ECC71', secondary: '#fff' },
-            },
-            error: {
-              iconTheme: { primary: '#E74C3C', secondary: '#fff' },
-            },
-          }}
-        />
+    <html lang="en" className={`${instrumentSerif.variable} ${dmMono.variable}`}>
+      <body className="bam-root">
+        <ClientProviders>
+          {children}
+        </ClientProviders>
       </body>
     </html>
   );

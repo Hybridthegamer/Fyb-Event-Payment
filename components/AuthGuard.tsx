@@ -28,11 +28,26 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#2C0A0A]">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-[#C9A227] border-t-transparent rounded-full animate-spin" />
-          <p className="text-[#C4A882] font-inter text-sm">Loading...</p>
-        </div>
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--bam-bg)',
+        }}
+      >
+        <div
+          style={{
+            width: '28px',
+            height: '28px',
+            border: '1px solid var(--bam-cream-40)',
+            borderTopColor: 'transparent',
+            borderRadius: '50%',
+            animation: 'bam-spin 1s linear infinite',
+          }}
+        />
+        <style>{`@keyframes bam-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }

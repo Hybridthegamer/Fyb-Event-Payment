@@ -1,16 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-:root {
-  --bg-primary: #2C0A0A;
-  --bg-secondary: #3D1010;
-  --card-surface: #4A1515;
-  --accent-gold: #C9A227;
-  --accent-gold-light: #E8C84A;
-}
 
 * {
   box-sizing: border-box;
@@ -22,67 +12,25 @@ body {
   padding: 0;
 }
 
-body {
-  background-color: var(--bg-primary);
-  background-image: radial-gradient(ellipse at 50% 0%, #3D1010 0%, #2C0A0A 70%);
-  background-attachment: fixed;
-  color: #ffffff;
-  font-family: 'Inter', sans-serif;
+body.bam-root {
+  background: var(--bam-bg);
+  color: var(--bam-cream);
+  font-family: var(--bam-font-mono);
+  -webkit-font-smoothing: antialiased;
   min-height: 100vh;
 }
 
-.font-playfair {
-  font-family: 'Playfair Display', serif;
-}
-
-.btn-gold {
-  background: linear-gradient(135deg, #C9A227, #E8C84A);
-  color: #1A0505;
-  font-weight: 600;
-  border-radius: 0.5rem;
-  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
-}
-
-.btn-gold:hover:not(:disabled) {
-  transform: scale(1.05);
-  box-shadow: 0 4px 20px rgba(201, 162, 39, 0.4);
-}
-
-.btn-gold:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.gold-card {
-  background-color: #4A1515;
-  border: 1px solid rgba(201, 162, 39, 0.3);
-  box-shadow: 0 0 20px rgba(201, 162, 39, 0.08);
-  border-radius: 0.75rem;
-}
-
-.gold-glow {
-  box-shadow: 0 0 30px rgba(201, 162, 39, 0.2), 0 0 60px rgba(201, 162, 39, 0.08);
-}
-
-input[type='range'] {
-  accent-color: #C9A227;
-}
-
-/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
-  background: #2C0A0A;
+  background: var(--bam-bg);
 }
-
 ::-webkit-scrollbar-thumb {
-  background: rgba(201, 162, 39, 0.4);
+  background: var(--bam-cream-20);
   border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(201, 162, 39, 0.7);
+  background: var(--bam-cream-40);
 }
