@@ -52,10 +52,14 @@ export default function GrainOverlay() {
       ref={canvasRef}
       style={{
         position: 'fixed',
-        inset: 0,
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
         zIndex: 9999,
         opacity: 0.055,
         pointerEvents: 'none',
+        userSelect: 'none',
       }}
     />
   );
