@@ -4,5 +4,12 @@ service cloud.firestore {
     match /registrations/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+
+    // Shared bank ledger for the admin dashboard. Any authenticated user may
+    // append their own payment as a deposit; the admin (also authenticated)
+    // records withdrawals. The PIN gate ('2880') protects the admin UI itself.
+    match /bank/{docId} {
+      allow read, write: if request.auth != null;
+    }
   }
 }

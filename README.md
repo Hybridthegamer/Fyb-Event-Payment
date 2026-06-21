@@ -9,7 +9,7 @@ A student-facing payment portal for the National Association of Computing Studen
 - **Framework**: Next.js 14 (App Router)
 - **Auth**: Firebase Authentication (Google Sign-In)
 - **Database**: Firebase Firestore
-- **Payments**: Bank transfer (Step 2 — pending integration)
+- **Payments**: FossaPay (bank transfer collections + payouts)
 - **Ticket generation**: html2canvas
 - **Styling**: Tailwind CSS
 - **Deployment**: Vercel
@@ -57,10 +57,29 @@ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
 NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abc123
 
-# ── Payment Integration ──────────────────────────────────────
-# Paystack removed. Add bank transfer env vars here in Step 2.
+# ── FossaPay (payments) ──────────────────────────────────────
+# Secret key from dashboard.fossapay.com → Settings → API Keys
+# (fp_test_sk_* for testing, fp_live_sk_* for production).
+FOSSAPAY_SECRET_KEY=fp_live_sk_xxxxxxxx
+# Secret used to verify inbound webhook signatures.
+FOSSAPAY_WEBHOOK_SECRET=your-webhook-secret
+
+# The single shared account shown to every student. Provision once, then pin
+# the ids here so the app never re-creates the wallet:
+FOSSAPAY_CUSTOMER_ID=
+FOSSAPAY_WALLET_ID=
+# Optional overrides:
+# FOSSAPAY_WALLET_REFERENCE=nacos-fyb-dinner-night
+# FOSSAPAY_CUSTOMER_EMAIL=fybdinnernight@nacosrsu.events
+# FOSSAPAY_BASE_URL=https://api-production.fossapay.com/api/v1
 # ────────────────────────────────────────────────────────────
 ```
+
+> **Simulation mode:** With no `FOSSAPAY_SECRET_KEY` set, the payment + bank
+> flows run in a safe simulated mode (account details, payment confirmation,
+> bank list, name enquiry, withdrawals) so the whole UX can be exercised
+> without moving real money. Add a real key to switch to live processing — no
+> code changes required.
 
 ### 4. Run locally
 
@@ -81,9 +100,40 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Payment Integration
+## Payment Integration (FossaPay)
 
-The Paystack integration has been removed. A bank transfer payment system will be wired in as Step 2. Do not go live until Step 2 is complete.
+Payments run on [FossaPay](https://docs.fossapay.com) — bank-transfer
+collections for student payments and inter-bank transfers for admin payouts.
+
+**How it works**
+
+- A **single shared fiat account** (account name **"Fyb Dinner Night."**) is
+  displayed to every student on the bank-transfer screen. It is provisioned
+  once via the FossaPay API (`/api/fossapay/account`); pin
+  `FOSSAPAY_WALLET_ID` / `FOSSAPAY_CUSTOMER_ID` after the first run.
+- Students cover the **FossaPay processing fee**, added on top of their ticket
+  amount at transfer time:
+
+  | Amount transferred | Fee |
+  | --- | --- |
+  | below ₦5,000 | ₦60 |
+  | ₦5,000 – ₦9,999 | ₦120 |
+  | ₦10,000 – ₦14,999 | ₦200 |
+  | ₦15,000 – ₦24,999 | ₦250 |
+  | ₦25,000 and above | 1.2% (capped at ₦1,000) |
+
+- After paying, students see a **receipt**. Part payment → receipt only;
+  full payment → receipt **and** ticket(s). Both are downloadable.
+- The **admin dashboard** (`/admin`, PIN **2880**) is a full bank: every
+  student payment is a deposit and every payout a withdrawal, both reflected in
+  the displayed balance. Withdrawals use FossaPay's supported-banks list, name
+  enquiry, and inter-bank transfer.
+
+**API routes** (`app/api/fossapay/`): `account`, `verify`, `banks`,
+`name-enquiry`, `transfer`, `balance`, `webhook`.
+
+**Webhook:** point your FossaPay webhook at `/api/fossapay/webhook`. Signatures
+are verified with `FOSSAPAY_WEBHOOK_SECRET` (HMAC-SHA256).
 
 ---
 
@@ -108,7 +158,9 @@ app/
   login/page.tsx        → Google Sign-In
   dinner/page.tsx       → FYB Dinner Night (4-step flow)
   pool-party/page.tsx   → Coming Soon
-  api/                  → Payment verification (Step 2 pending)
+  admin/page.tsx        → Admin bank dashboard (PIN 2880)
+  api/fossapay/         → FossaPay routes (account, verify, banks,
+                          name-enquiry, transfer, balance, webhook)
 
 components/
   AuthGuard.tsx         → Auth protection wrapper
@@ -120,6 +172,7 @@ components/
 
 lib/
   firebase.ts           → Firebase init
-  firestoreHelpers.ts   → Firestore CRUD helpers
-  utils.ts              → formatNaira, getMatricLast4
+  firestoreHelpers.ts   → Firestore CRUD helpers + bank ledger
+  fossapay.ts           → FossaPay server-side client (server-only)
+  utils.ts              → formatNaira, getMatricLast4, fee calculation
 ```
