@@ -8,10 +8,11 @@ import {
   getRegistration,
   saveRegistration,
   recordPayment,
+  recordBankDeposit,
   Registration,
   PaymentRecord,
 } from '@/lib/firestoreHelpers';
-import { formatNaira, getMatricLast4 } from '@/lib/utils';
+import { formatNaira, getMatricLast4, calculateFossaPayFee } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import Navbar from '@/components/Navbar';
 import PaymentStepper from '@/components/PaymentStepper';
@@ -20,9 +21,12 @@ import ReceiptCard from '@/components/ReceiptCard';
 
 const BASE_AMOUNT = 25000;
 const PLUS_ONE_AMOUNT = 10000;
-const BANK_NAME = 'First Bank of Nigeria';
-const ACCOUNT_NUMBER = '3141592653';
-const ACCOUNT_NAME = 'NACOS RSU FYB';
+
+interface AccountDetails {
+  accountNumber: string;
+  bankName: string;
+  accountName: string;
+}
 
 type PaymentMode = 'full' | 'instalment';
 
@@ -76,6 +80,7 @@ export default function DinnerPage() {
   const [savingReg, setSavingReg] = useState(false);
   const [copiedAccount, setCopiedAccount] = useState(false);
   const [copiedRef, setCopiedRef] = useState(false);
+  const [account, setAccount] = useState<AccountDetails | null>(null);
 
   const ticketRefs = useRef<HTMLDivElement[]>([]);
 
@@ -139,6 +144,24 @@ export default function DinnerPage() {
     setInstalmentAmount(minInstalment);
   }, [minInstalment]);
 
+  // Fetch the single shared FossaPay account shown to every student.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/fossapay/account');
+        if (!res.ok) return;
+        const data = (await res.json()) as AccountDetails;
+        if (!cancelled) setAccount(data);
+      } catch {
+        // Non-fatal — the bank details card shows a loading state until ready.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleStep1Continue = useCallback(() => {
     if (!fullName.trim()) { toast.error('Please enter your full name.'); return; }
     if (matricNumber.trim().length < 4) { toast.error('Matric number must be at least 4 characters.'); return; }
@@ -176,6 +199,10 @@ export default function DinnerPage() {
         plusOneAmount: plusOneAmt,
         totalAmount: total,
       });
+      // Load the saved registration so the bank-transfer screen (which is
+      // guarded by `reg`) renders for first-time registrants too.
+      const saved = await getRegistration(user.uid);
+      if (saved) setExistingReg(saved);
       toast.success('Registration saved.');
       setStep(3);
     } catch {
@@ -185,10 +212,85 @@ export default function DinnerPage() {
     }
   }, [user, paymentMode, instalmentAmount, minInstalment, hasPlusOnes, numPlusOnes, plusOneNames, fullName, matricNumber]);
 
-  // ─── PAYMENT STUB ─────────────────────────────────────────
-  const handlePayment = useCallback(async (amountInNaira: number): Promise<void> => {
-    console.warn('Payment handler not yet implemented.', { amountInNaira });
-  }, []);
+  // ─── FOSSAPAY PAYMENT CONFIRMATION ────────────────────────
+  // `ticketAmount` is the portion that counts toward the student's ticket
+  // balance. The student transfers ticketAmount + FossaPay fee; we verify the
+  // transfer landed in the shared account, then record it.
+  const handlePayment = useCallback(
+    async (ticketAmount: number): Promise<void> => {
+      if (!user || processingPayment) return;
+      const fee = calculateFossaPayFee(ticketAmount);
+      const transferTotal = ticketAmount + fee;
+      const reference = `NACOS-FYB-${getMatricLast4(existingReg?.matricNumber ?? matricNumber)}`;
+
+      setProcessingPayment(true);
+      try {
+        const res = await fetch('/api/fossapay/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reference, amount: transferTotal }),
+        });
+        const result = await res.json();
+
+        if (!result.verified) {
+          toast.error(
+            "We couldn't confirm your transfer yet. If you've paid, wait a moment and try again."
+          );
+          return;
+        }
+
+        const total = existingReg?.totalAmount ?? totalAmount;
+        const alreadyPaid = existingReg?.amountPaid ?? 0;
+        const newAmountPaid = Math.min(alreadyPaid + ticketAmount, total);
+        const mode: PaymentRecord['type'] =
+          newAmountPaid >= total ? 'full' : 'instalment';
+
+        const paymentEntry: Omit<PaymentRecord, 'paidAt'> = {
+          reference,
+          amount: ticketAmount,
+          type: mode,
+          fee,
+        };
+
+        await recordPayment(user.uid, paymentEntry, newAmountPaid, total);
+
+        // Reflect the deposit in the admin bank ledger (best-effort).
+        try {
+          await recordBankDeposit({
+            id: `${user.uid}-${Date.now()}`,
+            name: existingReg?.fullName ?? fullName,
+            matric: existingReg?.matricNumber ?? matricNumber,
+            amount: ticketAmount,
+            fee,
+            reference,
+            type: mode,
+          });
+        } catch {
+          // Ledger write is non-critical to the student's flow.
+        }
+
+        const refreshed = await getRegistration(user.uid);
+        if (refreshed) {
+          setExistingReg(refreshed);
+          setLatestPayment(
+            refreshed.payments[refreshed.payments.length - 1] ?? null
+          );
+        }
+        setIsReturningPartial(false);
+        setStep(4);
+        toast.success(
+          newAmountPaid >= total
+            ? 'Payment complete! Your ticket is ready.'
+            : 'Payment received. Here is your receipt.'
+        );
+      } catch {
+        toast.error('Something went wrong confirming your payment. Please try again.');
+      } finally {
+        setProcessingPayment(false);
+      }
+    },
+    [user, processingPayment, existingReg, matricNumber, fullName, totalAmount]
+  );
   // ──────────────────────────────────────────────────────────
 
   const handleDownloadAll = useCallback(async () => {
@@ -212,11 +314,12 @@ export default function DinnerPage() {
   }, [existingReg]);
 
   const handleCopyAccount = useCallback(() => {
-    navigator.clipboard.writeText(ACCOUNT_NUMBER).then(() => {
+    if (!account?.accountNumber) return;
+    navigator.clipboard.writeText(account.accountNumber).then(() => {
       setCopiedAccount(true);
       setTimeout(() => setCopiedAccount(false), 2000);
     });
-  }, []);
+  }, [account]);
 
   const handleCopyRef = useCallback((refCode: string) => {
     navigator.clipboard.writeText(refCode).then(() => {
@@ -240,7 +343,13 @@ export default function DinnerPage() {
   const regTotalAmount = reg?.totalAmount ?? totalAmount;
   const regAmountPaid = reg?.amountPaid ?? 0;
   const regRemaining = regTotalAmount - regAmountPaid;
+  // Ticket portion the student is paying this round.
   const amountToPayNow = paymentMode === 'full' ? (reg?.totalAmount ?? totalAmount) : instalmentAmount;
+  // FossaPay fee the student covers, and the total they actually transfer.
+  const feeNow = calculateFossaPayFee(amountToPayNow);
+  const transferTotalNow = amountToPayNow + feeNow;
+  const continueFee = calculateFossaPayFee(continuePayAmount);
+  const continueTransferTotal = continuePayAmount + continueFee;
   const refCode = `NACOS-FYB-${getMatricLast4(reg?.matricNumber ?? matricNumber)}`;
   const stepLabel = `0${step} / 04`;
 
@@ -535,6 +644,17 @@ export default function DinnerPage() {
                 >
                   {formatNaira(totalAmount)}
                 </p>
+                <p
+                  style={{
+                    fontFamily: 'var(--bam-font-mono)',
+                    fontSize: 'var(--bam-t-micro)',
+                    color: 'var(--bam-cream-40)',
+                    letterSpacing: '0.05em',
+                    marginTop: '8px',
+                  }}
+                >
+                  A small FossaPay processing fee is added to your transfer at payment.
+                </p>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--bam-space-md)', marginBottom: 'var(--bam-space-xl)' }}>
@@ -806,7 +926,7 @@ export default function DinnerPage() {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: 'var(--bam-space-md)', alignItems: 'baseline' }}>
                   <span style={{ fontFamily: 'var(--bam-font-mono)', fontSize: 'var(--bam-t-micro)', color: 'var(--bam-cream-40)', textTransform: 'uppercase', letterSpacing: '0.15em' }}>Bank</span>
-                  <span style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.875rem', color: 'var(--bam-cream-80)', textAlign: 'right' }}>{BANK_NAME}</span>
+                  <span style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.875rem', color: 'var(--bam-cream-80)', textAlign: 'right' }}>{account?.bankName ?? '…'}</span>
                 </div>
 
                 <p
@@ -820,7 +940,7 @@ export default function DinnerPage() {
                     textAlign: 'center',
                   }}
                 >
-                  {ACCOUNT_NUMBER}
+                  {account?.accountNumber ?? '…'}
                 </p>
                 <p
                   style={{
@@ -831,20 +951,10 @@ export default function DinnerPage() {
                     marginBottom: 'var(--bam-space-md)',
                   }}
                 >
-                  {ACCOUNT_NAME}
+                  {account?.accountName ?? 'Fyb Dinner Night.'}
                 </p>
-                <p
-                  style={{
-                    fontFamily: 'var(--bam-font-serif)',
-                    fontSize: '1.4rem',
-                    color: 'var(--event-gold)',
-                    textAlign: 'center',
-                    margin: '0 0 var(--bam-space-md)',
-                    fontWeight: 400,
-                  }}
-                >
-                  {formatNaira(amountToPayNow)}
-                </p>
+
+                <FeeBreakdown ticketAmount={amountToPayNow} fee={feeNow} total={transferTotalNow} />
 
                 <button
                   onClick={handleCopyAccount}
@@ -995,11 +1105,11 @@ export default function DinnerPage() {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px', alignItems: 'baseline' }}>
                   <span style={{ fontFamily: 'var(--bam-font-mono)', fontSize: 'var(--bam-t-micro)', color: 'var(--bam-cream-40)', textTransform: 'uppercase', letterSpacing: '0.15em' }}>Bank</span>
-                  <span style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.875rem', color: 'var(--bam-cream-80)', textAlign: 'right' }}>{BANK_NAME}</span>
+                  <span style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.875rem', color: 'var(--bam-cream-80)', textAlign: 'right' }}>{account?.bankName ?? '…'}</span>
                 </div>
-                <p style={{ fontFamily: 'var(--bam-font-serif)', fontSize: '2.5rem', color: 'var(--bam-cream)', letterSpacing: '0.05em', margin: '0 0 8px', fontWeight: 400, textAlign: 'center' }}>{ACCOUNT_NUMBER}</p>
-                <p style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.875rem', color: 'var(--bam-cream-80)', textAlign: 'center', marginBottom: '12px' }}>{ACCOUNT_NAME}</p>
-                <p style={{ fontFamily: 'var(--bam-font-serif)', fontSize: '1.4rem', color: 'var(--event-gold)', textAlign: 'center', margin: '0 0 var(--bam-space-md)', fontWeight: 400 }}>{formatNaira(regRemaining)}</p>
+                <p style={{ fontFamily: 'var(--bam-font-serif)', fontSize: '2.5rem', color: 'var(--bam-cream)', letterSpacing: '0.05em', margin: '0 0 8px', fontWeight: 400, textAlign: 'center' }}>{account?.accountNumber ?? '…'}</p>
+                <p style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.875rem', color: 'var(--bam-cream-80)', textAlign: 'center', marginBottom: '12px' }}>{account?.accountName ?? 'Fyb Dinner Night.'}</p>
+                <FeeBreakdown ticketAmount={continuePayAmount} fee={continueFee} total={continueTransferTotal} />
                 <button onClick={handleCopyAccount} className="w-full" style={{ background: 'var(--bam-surface-2)', border: `1px solid ${copiedAccount ? 'var(--bam-cream-40)' : 'var(--bam-border)'}`, borderRadius: 0, color: 'var(--bam-cream)', fontFamily: 'var(--bam-font-mono)', fontSize: 'var(--bam-t-micro)', textTransform: 'uppercase', letterSpacing: '0.15em', padding: '10px', cursor: 'pointer', transition: 'border-color 0.15s ease' }}>
                   {copiedAccount ? 'COPIED ✓' : 'COPY ACCOUNT NUMBER'}
                 </button>
@@ -1081,6 +1191,16 @@ export default function DinnerPage() {
 
               {reg.paymentStatus === 'completed' ? (
                 <>
+                  {reg.payments.length > 0 && (
+                    <ReceiptCard
+                      fullName={reg.fullName}
+                      matricNumber={reg.matricNumber}
+                      totalAmount={reg.totalAmount}
+                      amountPaid={reg.amountPaid}
+                      lastPayment={latestPayment ?? reg.payments[reg.payments.length - 1]}
+                      variant="completed"
+                    />
+                  )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--bam-space-2xl)', overflowX: 'auto' }}>
                     <TicketCard fullName={reg.fullName} matricNumber={reg.matricNumber} />
                     {reg.plusOnes.map((plusOne, i) => (
@@ -1126,6 +1246,7 @@ export default function DinnerPage() {
                   totalAmount={reg.totalAmount}
                   amountPaid={reg.amountPaid}
                   lastPayment={latestPayment ?? reg.payments[reg.payments.length - 1]}
+                  variant="partial"
                   onPayBalance={() => {
                     setIsReturningPartial(true);
                     setContinuePayAmount(Math.min(regRemaining, regRemaining));
@@ -1213,6 +1334,68 @@ export default function DinnerPage() {
 }
 
 // ── Sub-components ──
+
+function FeeBreakdown({
+  ticketAmount,
+  fee,
+  total,
+}: {
+  ticketAmount: number;
+  fee: number;
+  total: number;
+}) {
+  const rowStyle: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: '4px',
+  };
+  const labelS: React.CSSProperties = {
+    fontFamily: 'var(--bam-font-mono)',
+    fontSize: 'var(--bam-t-micro)',
+    color: 'var(--bam-cream-40)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.15em',
+  };
+  const valueS: React.CSSProperties = {
+    fontFamily: 'var(--bam-font-mono)',
+    fontSize: '0.8rem',
+    color: 'var(--bam-cream-80)',
+  };
+  return (
+    <div
+      style={{
+        background: 'var(--bam-surface-2)',
+        border: '1px solid var(--bam-border)',
+        padding: 'var(--bam-space-md)',
+        marginBottom: 'var(--bam-space-md)',
+      }}
+    >
+      <div style={rowStyle}>
+        <span style={labelS}>Ticket amount</span>
+        <span style={valueS}>{formatNaira(ticketAmount)}</span>
+      </div>
+      <div style={rowStyle}>
+        <span style={labelS}>Processing fee</span>
+        <span style={valueS}>{formatNaira(fee)}</span>
+      </div>
+      <div style={{ height: '1px', background: 'var(--bam-border)', margin: '8px 0' }} />
+      <div style={{ ...rowStyle, marginBottom: 0 }}>
+        <span style={{ ...labelS, color: 'var(--bam-cream-60)' }}>Transfer exactly</span>
+        <span
+          style={{
+            fontFamily: 'var(--bam-font-serif)',
+            fontSize: '1.4rem',
+            color: 'var(--event-gold)',
+            fontWeight: 400,
+          }}
+        >
+          {formatNaira(total)}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 function PricingSummary({
   hasPlusOnes,

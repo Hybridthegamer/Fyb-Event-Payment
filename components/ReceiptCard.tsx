@@ -10,7 +10,8 @@ interface ReceiptCardProps {
   totalAmount: number;
   amountPaid: number;
   lastPayment: PaymentRecord;
-  onPayBalance: () => void;
+  variant?: 'partial' | 'completed';
+  onPayBalance?: () => void;
 }
 
 const ReceiptCard = memo(function ReceiptCard({
@@ -19,8 +20,10 @@ const ReceiptCard = memo(function ReceiptCard({
   totalAmount,
   amountPaid,
   lastPayment,
+  variant = 'partial',
   onPayBalance,
 }: ReceiptCardProps) {
+  const isCompleted = variant === 'completed';
   const receiptRef = useRef<HTMLDivElement>(null);
   const [downloading, setDownloading] = useState(false);
   const last4 = getMatricLast4(matricNumber);
@@ -121,22 +124,28 @@ const ReceiptCard = memo(function ReceiptCard({
           <span style={labelStyle}>Paid This Session</span>
           <span style={{ ...valueStyle, color: 'var(--bam-cream)' }}>{formatNaira(lastPayment.amount)}</span>
         </div>
+        {typeof lastPayment.fee === 'number' && lastPayment.fee > 0 && (
+          <div style={rowStyle}>
+            <span style={labelStyle}>Processing Fee</span>
+            <span style={valueStyle}>{formatNaira(lastPayment.fee)}</span>
+          </div>
+        )}
         <div style={rowStyle}>
           <span style={labelStyle}>Total Paid</span>
           <span style={valueStyle}>{formatNaira(amountPaid)}</span>
         </div>
         <div style={{ ...rowStyle, borderTop: '1px solid var(--bam-border)', paddingTop: '12px', marginTop: '4px' }}>
-          <span style={labelStyle}>Outstanding Balance</span>
+          <span style={labelStyle}>{isCompleted ? 'Status' : 'Outstanding Balance'}</span>
           <span
             style={{
               fontFamily: 'var(--bam-font-serif)',
-              fontSize: '1.4rem',
-              color: 'var(--event-gold)',
+              fontSize: isCompleted ? '1.1rem' : '1.4rem',
+              color: isCompleted ? '#2ECC71' : 'var(--event-gold)',
               textAlign: 'right',
               fontWeight: 400,
             }}
           >
-            {formatNaira(remaining)}
+            {isCompleted ? 'PAID IN FULL' : formatNaira(remaining)}
           </span>
         </div>
 
@@ -144,8 +153,8 @@ const ReceiptCard = memo(function ReceiptCard({
           style={{
             marginTop: 'var(--bam-space-md)',
             padding: 'var(--bam-space-md)',
-            background: 'var(--bam-red-subtle)',
-            border: '1px solid rgba(200,0,60,0.2)',
+            background: isCompleted ? 'rgba(46,204,113,0.08)' : 'var(--bam-red-subtle)',
+            border: `1px solid ${isCompleted ? 'rgba(46,204,113,0.25)' : 'rgba(200,0,60,0.2)'}`,
           }}
         >
           <p
@@ -158,32 +167,36 @@ const ReceiptCard = memo(function ReceiptCard({
               margin: 0,
             }}
           >
-            ⚠ COMPLETE PAYMENT TO RECEIVE YOUR TICKET
+            {isCompleted
+              ? '✓ PAYMENT COMPLETE · YOUR TICKET IS READY BELOW'
+              : '⚠ COMPLETE PAYMENT TO RECEIVE YOUR TICKET'}
           </p>
         </div>
       </div>
 
-      <button
-        onClick={onPayBalance}
-        className="w-full"
-        style={{
-          background: 'var(--bam-red)',
-          border: 'none',
-          borderRadius: 0,
-          color: 'var(--bam-cream)',
-          fontFamily: 'var(--bam-font-mono)',
-          fontSize: '0.75rem',
-          textTransform: 'uppercase',
-          letterSpacing: '0.20em',
-          padding: '16px',
-          cursor: 'pointer',
-          transition: 'background 0.15s ease',
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bam-red-dark)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bam-red)'; }}
-      >
-        PAY REMAINING BALANCE →
-      </button>
+      {!isCompleted && onPayBalance && (
+        <button
+          onClick={onPayBalance}
+          className="w-full"
+          style={{
+            background: 'var(--bam-red)',
+            border: 'none',
+            borderRadius: 0,
+            color: 'var(--bam-cream)',
+            fontFamily: 'var(--bam-font-mono)',
+            fontSize: '0.75rem',
+            textTransform: 'uppercase',
+            letterSpacing: '0.20em',
+            padding: '16px',
+            cursor: 'pointer',
+            transition: 'background 0.15s ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bam-red-dark)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bam-red)'; }}
+        >
+          PAY REMAINING BALANCE →
+        </button>
+      )}
 
       <button
         onClick={downloadReceipt}

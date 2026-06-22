@@ -1,87 +1,74 @@
 'use client';
 
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import toast from 'react-hot-toast';
 import Navbar from '@/components/Navbar';
+import AuthGuard from '@/components/AuthGuard';
+import { formatNaira } from '@/lib/utils';
+import {
+  getBankLedger,
+  recordBankWithdrawal,
+  BankLedger,
+  BankDepositEntry,
+  BankWithdrawalEntry,
+} from '@/lib/firestoreHelpers';
 
-const ADMIN_PIN = '0000';
+const ADMIN_PIN = '2880';
 
-type TabKey = 'ALL' | 'FLAGGED' | 'PARTIAL' | 'COMPLETED';
+interface Bank {
+  bankName: string;
+  bankCode: string;
+}
 
-const MOCK_STATS = {
-  total: 147,
-  flagged: 3,
-  partial: 24,
-  completed: 120,
-};
-
-const MOCK_REGISTRATIONS = [
-  { id: '1', name: 'Chukwuemeka Obi', matric: 'U2019/5700', status: 'completed', amount: '₦25,000', date: '2026-05-14' },
-  { id: '2', name: 'Amaka Nwosu', matric: 'U2019/4321', status: 'partial', amount: '₦12,500', date: '2026-05-15' },
-  { id: '3', name: 'Emeka Eze', matric: 'U2019/8800', status: 'flagged', amount: '₦25,000', date: '2026-05-16' },
-  { id: '4', name: 'Ngozi Adeyemi', matric: 'U2019/1122', status: 'completed', amount: '₦35,000', date: '2026-05-17' },
-  { id: '5', name: 'Tobi Adeleke', matric: 'U2019/6655', status: 'completed', amount: '₦25,000', date: '2026-05-17' },
-  { id: '6', name: 'Chioma Okafor', matric: 'U2019/3344', status: 'partial', amount: '₦5,000', date: '2026-05-18' },
-  { id: '7', name: 'Emeka Johnson', matric: 'U2019/9900', status: 'flagged', amount: '₦45,000', date: '2026-05-18' },
-];
+type LedgerRow =
+  | ({ kind: 'deposit' } & BankDepositEntry)
+  | ({ kind: 'withdrawal' } & BankWithdrawalEntry);
 
 export default function AdminPage() {
+  return <AuthGuard>{() => <AdminGate />}</AuthGuard>;
+}
+
+function AdminGate() {
   const [pin, setPin] = useState(['', '', '', '']);
   const [unlocked, setUnlocked] = useState(false);
   const [error, setError] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabKey>('ALL');
-  const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  const handlePinInput = useCallback((index: number, value: string) => {
-    if (!/^\d?$/.test(value)) return;
-    const next = [...pin];
-    next[index] = value;
-    setPin(next);
-    setError(false);
+  const handlePinInput = useCallback(
+    (index: number, value: string) => {
+      if (!/^\d?$/.test(value)) return;
+      const next = [...pin];
+      next[index] = value;
+      setPin(next);
+      setError(false);
 
-    if (value && index < 3) {
-      inputRefs.current[index + 1]?.focus();
-    }
+      if (value && index < 3) inputRefs.current[index + 1]?.focus();
 
-    if (value && index === 3) {
-      const entered = [...next].join('');
-      if (entered === ADMIN_PIN) {
-        setUnlocked(true);
-      } else {
-        setError(true);
-        setTimeout(() => {
-          setPin(['', '', '', '']);
-          setError(false);
-          inputRefs.current[0]?.focus();
-        }, 700);
+      if (value && index === 3) {
+        const entered = [...next].join('');
+        if (entered === ADMIN_PIN) {
+          setUnlocked(true);
+        } else {
+          setError(true);
+          setTimeout(() => {
+            setPin(['', '', '', '']);
+            setError(false);
+            inputRefs.current[0]?.focus();
+          }, 700);
+        }
       }
-    }
-  }, [pin]);
+    },
+    [pin]
+  );
 
-  const handlePinKeyDown = useCallback((index: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !pin[index] && index > 0) {
-      inputRefs.current[index - 1]?.focus();
-    }
-  }, [pin]);
-
-  const filtered = useMemo(() => {
-    if (activeTab === 'ALL') return MOCK_REGISTRATIONS;
-    return MOCK_REGISTRATIONS.filter((r) => r.status === activeTab.toLowerCase());
-  }, [activeTab]);
-
-  const downloadCSV = () => {
-    const header = 'Name,Matric,Status,Amount,Date';
-    const rows = MOCK_REGISTRATIONS.map(
-      (r) => `${r.name},${r.matric},${r.status},${r.amount},${r.date}`
-    ).join('\n');
-    const blob = new Blob([header + '\n' + rows], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'NACOS-FYB-Registrations.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const handlePinKeyDown = useCallback(
+    (index: number, e: React.KeyboardEvent) => {
+      if (e.key === 'Backspace' && !pin[index] && index > 0) {
+        inputRefs.current[index - 1]?.focus();
+      }
+    },
+    [pin]
+  );
 
   if (!unlocked) {
     return (
@@ -169,31 +156,149 @@ export default function AdminPage() {
     );
   }
 
-  const tabs: TabKey[] = ['ALL', 'FLAGGED', 'PARTIAL', 'COMPLETED'];
+  return <AdminDashboard />;
+}
+
+// ─── Dashboard + Bank system ─────────────────────────────────────────────────
+
+function AdminDashboard() {
+  const [ledger, setLedger] = useState<BankLedger | null>(null);
+  const [liveBalance, setLiveBalance] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showWithdraw, setShowWithdraw] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [l, balRes] = await Promise.all([
+        getBankLedger(),
+        fetch('/api/fossapay/balance').then((r) => r.json()).catch(() => ({ available: null })),
+      ]);
+      setLedger(l);
+      setLiveBalance(typeof balRes?.available === 'number' ? balRes.available : null);
+    } catch {
+      toast.error('Failed to load bank data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const totalDeposits = ledger?.totalDeposits ?? 0;
+  const totalWithdrawals = ledger?.totalWithdrawals ?? 0;
+  const ledgerBalance = totalDeposits - totalWithdrawals;
+  const balance = liveBalance ?? ledgerBalance;
+
+  const rows: LedgerRow[] = useMemo(() => {
+    if (!ledger) return [];
+    const deposits: LedgerRow[] = ledger.deposits.map((d) => ({ kind: 'deposit', ...d }));
+    const withdrawals: LedgerRow[] = ledger.withdrawals.map((w) => ({ kind: 'withdrawal', ...w }));
+    return [...deposits, ...withdrawals].sort((a, b) => {
+      const ta = a.createdAt?.toMillis?.() ?? 0;
+      const tb = b.createdAt?.toMillis?.() ?? 0;
+      return tb - ta;
+    });
+  }, [ledger]);
+
+  const fmtDate = (row: LedgerRow) => {
+    try {
+      return row.createdAt?.toDate?.().toLocaleDateString('en-NG', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      }) ?? '—';
+    } catch {
+      return '—';
+    }
+  };
+
+  const downloadCSV = () => {
+    const header = 'Type,Party,Amount,Fee,Reference,Status,Date';
+    const lines = rows.map((r) => {
+      if (r.kind === 'deposit') {
+        return `Deposit,${r.name} (${r.matric}),${r.amount},${r.fee},${r.reference},completed,${fmtDate(r)}`;
+      }
+      return `Withdrawal,${r.accountName} (${r.bankName} ${r.accountNumber}),${r.amount},0,${r.reference},${r.status},${fmtDate(r)}`;
+    });
+    const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'NACOS-FYB-Bank-Statement.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const statCards = [
+    { label: 'BALANCE', value: formatNaira(Math.max(0, Math.round(balance))), accent: true },
+    { label: 'DEPOSITS', value: formatNaira(totalDeposits) },
+    { label: 'WITHDRAWALS', value: formatNaira(totalWithdrawals) },
+    { label: 'TRANSACTIONS', value: String(rows.length) },
+  ];
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bam-bg)' }}>
-      <Navbar pageLabel="ADMIN" />
+      <Navbar pageLabel="ADMIN · BANK" />
 
-      <main style={{ paddingTop: '56px', padding: 'calc(56px + var(--bam-space-2xl)) var(--bam-pad) var(--bam-space-2xl)' }}>
-        {/* Stats */}
+      <main style={{ padding: 'calc(56px + var(--bam-space-2xl)) var(--bam-pad) var(--bam-space-2xl)' }}>
+        {/* Heading + actions */}
         <div
-          className="grid grid-cols-2 md:grid-cols-4 gap-4"
-          style={{ marginBottom: 'var(--bam-space-2xl)' }}
+          style={{
+            display: 'flex',
+            alignItems: 'flex-end',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
+            marginBottom: 'var(--bam-space-xl)',
+          }}
         >
-          {[
-            { label: 'TOTAL', value: MOCK_STATS.total, flagged: false, delay: '0' },
-            { label: 'COMPLETED', value: MOCK_STATS.completed, flagged: false, delay: '80' },
-            { label: 'PARTIAL', value: MOCK_STATS.partial, flagged: false, delay: '160' },
-            { label: 'FLAGGED', value: MOCK_STATS.flagged, flagged: true, delay: '240' },
-          ].map((stat) => (
+          <div>
+            <p
+              style={{
+                fontFamily: 'var(--bam-font-mono)',
+                fontSize: 'var(--bam-t-micro)',
+                color: 'var(--bam-cream-20)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.22em',
+                margin: '0 0 4px',
+              }}
+            >
+              FYB DINNER NIGHT · FOSSAPAY
+            </p>
+            <h1
+              style={{
+                fontFamily: 'var(--bam-font-serif)',
+                fontSize: 'var(--bam-t-title)',
+                color: 'var(--bam-cream)',
+                fontWeight: 400,
+                margin: 0,
+              }}
+            >
+              Bank.
+            </h1>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={refresh} style={ghostBtn}>REFRESH</button>
+            <button onClick={downloadCSV} style={ghostBtn}>EXPORT CSV</button>
+            <button
+              onClick={() => setShowWithdraw((v) => !v)}
+              style={{ ...ghostBtn, background: 'var(--bam-red)', borderColor: 'var(--bam-red)', color: 'var(--bam-cream)' }}
+            >
+              {showWithdraw ? 'CLOSE' : 'WITHDRAW'}
+            </button>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4" style={{ marginBottom: 'var(--bam-space-2xl)' }}>
+          {statCards.map((stat) => (
             <div
               key={stat.label}
-              data-reveal
-              data-reveal-delay={stat.delay}
               style={{
                 background: 'var(--bam-surface)',
-                border: `1px solid ${stat.flagged ? 'rgba(200,0,60,0.3)' : 'var(--bam-border)'}`,
+                border: `1px solid ${stat.accent ? 'var(--event-gold)' : 'var(--bam-border)'}`,
                 borderRadius: 0,
                 padding: 'var(--bam-space-lg)',
               }}
@@ -213,79 +318,32 @@ export default function AdminPage() {
               <p
                 style={{
                   fontFamily: 'var(--bam-font-serif)',
-                  fontSize: 'var(--bam-t-title)',
-                  color: stat.flagged ? 'var(--bam-red)' : 'var(--bam-cream)',
+                  fontSize: stat.accent ? 'var(--bam-t-title)' : '1.6rem',
+                  color: stat.accent ? 'var(--event-gold)' : 'var(--bam-cream)',
                   margin: 0,
                   fontWeight: 400,
+                  wordBreak: 'break-word',
                 }}
               >
-                {stat.value}
+                {loading ? '…' : stat.value}
               </p>
             </div>
           ))}
         </div>
 
-        {/* Tabs + Export */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: 'var(--bam-space-md)',
-            flexWrap: 'wrap',
-            gap: '12px',
-          }}
-        >
-          <div style={{ display: 'flex', gap: '0', borderBottom: '1px solid var(--bam-border)' }}>
-            {tabs.map((tab, i) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                style={{
-                  fontFamily: 'var(--bam-font-mono)',
-                  fontSize: 'var(--bam-t-micro)',
-                  color: activeTab === tab ? 'var(--bam-cream)' : 'var(--bam-cream-40)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.18em',
-                  background: 'transparent',
-                  border: 'none',
-                  borderBottom: activeTab === tab ? '2px solid var(--bam-cream)' : '2px solid transparent',
-                  padding: '8px 16px',
-                  cursor: 'pointer',
-                  transition: 'color 0.15s ease',
-                  marginBottom: '-1px',
-                }}
-              >
-                {tab}{i < tabs.length - 1 && <span style={{ color: 'var(--bam-cream-20)', marginLeft: '16px' }}>·</span>}
-              </button>
-            ))}
-          </div>
-
-          <button
-            onClick={downloadCSV}
-            style={{
-              background: 'var(--bam-surface)',
-              border: '1px solid var(--bam-border)',
-              borderRadius: 0,
-              color: 'var(--bam-cream-60)',
-              fontFamily: 'var(--bam-font-mono)',
-              fontSize: 'var(--bam-t-micro)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.15em',
-              padding: '8px 16px',
-              cursor: 'pointer',
-              transition: 'border-color 0.15s ease',
+        {/* Withdrawal panel */}
+        {showWithdraw && (
+          <WithdrawPanel
+            available={balance}
+            onDone={async () => {
+              setShowWithdraw(false);
+              await refresh();
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--bam-cream-40)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--bam-border)'; }}
-          >
-            EXPORT CSV
-          </button>
-        </div>
+          />
+        )}
 
-        {/* Table */}
+        {/* Transactions table */}
         <div style={{ border: '1px solid var(--bam-border)', borderRadius: 0, overflow: 'hidden' }}>
-          {/* Header */}
           <div
             className="grid grid-cols-5"
             style={{
@@ -294,7 +352,7 @@ export default function AdminPage() {
               borderBottom: '1px solid var(--bam-border)',
             }}
           >
-            {['NAME', 'MATRIC', 'STATUS', 'AMOUNT', 'DATE'].map((h) => (
+            {['TYPE', 'PARTY', 'AMOUNT', 'REFERENCE', 'DATE'].map((h) => (
               <span
                 key={h}
                 style={{
@@ -310,112 +368,41 @@ export default function AdminPage() {
             ))}
           </div>
 
-          {filtered.map((row) => (
-            <div key={row.id}>
+          {rows.map((row, i) => {
+            const isDeposit = row.kind === 'deposit';
+            const party = isDeposit
+              ? `${(row as BankDepositEntry).name} · ${(row as BankDepositEntry).matric}`
+              : `${(row as BankWithdrawalEntry).accountName} · ${(row as BankWithdrawalEntry).bankName}`;
+            const failed = !isDeposit && (row as BankWithdrawalEntry).status === 'failed';
+            return (
               <div
+                key={`${row.kind}-${row.id}-${i}`}
                 className="grid grid-cols-5"
-                onClick={() => setExpandedRow(expandedRow === row.id ? null : row.id)}
                 style={{
                   padding: '12px 16px',
                   borderBottom: '1px solid var(--bam-border)',
-                  borderLeft: row.status === 'flagged' ? '3px solid var(--bam-red)' : '3px solid transparent',
-                  background: row.status === 'flagged' ? 'var(--bam-red-subtle)' : 'transparent',
-                  cursor: 'pointer',
-                  transition: 'background 0.15s ease',
-                }}
-                onMouseEnter={(e) => {
-                  if (row.status !== 'flagged') (e.currentTarget as HTMLElement).style.background = 'var(--bam-surface)';
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.background = row.status === 'flagged' ? 'var(--bam-red-subtle)' : 'transparent';
+                  borderLeft: `3px solid ${isDeposit ? '#2ECC71' : failed ? 'var(--bam-red)' : 'var(--event-gold)'}`,
+                  alignItems: 'baseline',
                 }}
               >
-                {[row.name, row.matric, row.status.toUpperCase(), row.amount, row.date].map((cell, ci) => (
-                  <span
-                    key={ci}
-                    style={{
-                      fontFamily: 'var(--bam-font-mono)',
-                      fontSize: '0.8rem',
-                      color: ci === 2 && row.status === 'flagged' ? 'var(--bam-red)' : 'var(--bam-cream-80)',
-                      textTransform: ci === 2 ? 'uppercase' : 'none',
-                      letterSpacing: ci === 2 ? '0.12em' : '0',
-                    }}
-                  >
-                    {cell}
-                  </span>
-                ))}
+                <span style={{ ...cellStyle, color: isDeposit ? '#2ECC71' : failed ? 'var(--bam-red)' : 'var(--event-gold)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+                  {isDeposit ? 'DEPOSIT' : failed ? 'WTH · FAILED' : 'WITHDRAWAL'}
+                </span>
+                <span style={cellStyle}>{party}</span>
+                <span style={cellStyle}>
+                  {isDeposit ? '+' : '−'}
+                  {formatNaira(row.amount)}
+                </span>
+                <span style={cellStyle}>{row.reference}</span>
+                <span style={cellStyle}>{fmtDate(row)}</span>
               </div>
+            );
+          })}
 
-              {expandedRow === row.id && (
-                <div
-                  style={{
-                    borderTop: '1px dashed var(--bam-border)',
-                    borderBottom: '1px solid var(--bam-border)',
-                    background: 'var(--bam-surface-2)',
-                    padding: 'var(--bam-space-lg)',
-                    animation: 'bam-fadeIn 0.2s ease',
-                  }}
-                >
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4" style={{ marginBottom: 'var(--bam-space-md)' }}>
-                    {[
-                      ['Name', row.name],
-                      ['Matric Number', row.matric],
-                      ['Status', row.status.toUpperCase()],
-                      ['Amount Paid', row.amount],
-                      ['Registration Date', row.date],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <p style={{ fontFamily: 'var(--bam-font-mono)', fontSize: 'var(--bam-t-micro)', color: 'var(--bam-cream-40)', textTransform: 'uppercase', letterSpacing: '0.15em', margin: '0 0 4px' }}>{label}</p>
-                        <p style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.8rem', color: 'var(--bam-cream-80)', margin: 0 }}>{value}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  {row.status === 'flagged' && (
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        style={{
-                          background: 'var(--bam-red)',
-                          border: 'none',
-                          borderRadius: 0,
-                          color: 'var(--bam-cream)',
-                          fontFamily: 'var(--bam-font-mono)',
-                          fontSize: 'var(--bam-t-micro)',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.15em',
-                          padding: '8px 20px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        VERIFY
-                      </button>
-                      <button
-                        style={{
-                          background: 'transparent',
-                          border: '1px solid var(--bam-border)',
-                          borderRadius: 0,
-                          color: 'var(--bam-cream-60)',
-                          fontFamily: 'var(--bam-font-mono)',
-                          fontSize: 'var(--bam-t-micro)',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.15em',
-                          padding: '8px 20px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        REJECT
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-
-          {filtered.length === 0 && (
+          {!loading && rows.length === 0 && (
             <div style={{ padding: 'var(--bam-space-2xl)', textAlign: 'center' }}>
               <p style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.8rem', color: 'var(--bam-cream-40)', textTransform: 'uppercase', letterSpacing: '0.15em' }}>
-                NO RECORDS
+                NO TRANSACTIONS YET
               </p>
             </div>
           )}
@@ -424,3 +411,256 @@ export default function AdminPage() {
     </div>
   );
 }
+
+// ─── Withdrawal panel ────────────────────────────────────────────────────────
+
+function WithdrawPanel({ available, onDone }: { available: number; onDone: () => void }) {
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [bankCode, setBankCode] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [accountName, setAccountName] = useState('');
+  const [amount, setAmount] = useState(0);
+  const [resolving, setResolving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/fossapay/banks')
+      .then((r) => r.json())
+      .then((d) => setBanks(d.banks ?? []))
+      .catch(() => setBanks([]));
+  }, []);
+
+  const selectedBank = banks.find((b) => b.bankCode === bankCode);
+
+  // Reset the resolved name whenever the destination changes.
+  useEffect(() => {
+    setAccountName('');
+  }, [bankCode, accountNumber]);
+
+  const resolveName = useCallback(async () => {
+    if (!bankCode || accountNumber.length < 10) {
+      toast.error('Select a bank and enter a valid 10-digit account number.');
+      return;
+    }
+    setResolving(true);
+    try {
+      const res = await fetch('/api/fossapay/name-enquiry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bankCode, accountNumber, bankName: selectedBank?.bankName }),
+      });
+      const data = await res.json();
+      if (data.success && data.accountName) {
+        setAccountName(data.accountName);
+      } else {
+        toast.error(data.error || 'Could not resolve account name.');
+      }
+    } catch {
+      toast.error('Account name enquiry failed.');
+    } finally {
+      setResolving(false);
+    }
+  }, [bankCode, accountNumber, selectedBank]);
+
+  const submit = useCallback(async () => {
+    if (!selectedBank || !accountName || accountNumber.length < 10) {
+      toast.error('Verify the destination account first.');
+      return;
+    }
+    if (amount <= 0) {
+      toast.error('Enter a valid amount.');
+      return;
+    }
+    if (amount > available) {
+      toast.error('Amount exceeds available balance.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/fossapay/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bankCode: selectedBank.bankCode,
+          bankName: selectedBank.bankName,
+          accountNumber,
+          accountName,
+          amount,
+          remarks: 'FYB Dinner Night withdrawal',
+        }),
+      });
+      const data = await res.json();
+
+      await recordBankWithdrawal({
+        id: `wth-${Date.now()}`,
+        accountName,
+        accountNumber,
+        bankName: selectedBank.bankName,
+        amount,
+        reference: data.reference || `WTH-${Date.now()}`,
+        status: data.success ? 'completed' : 'failed',
+      });
+
+      if (data.success) {
+        toast.success(`Withdrawal of ${formatNaira(amount)} sent.`);
+        onDone();
+      } else {
+        toast.error(data.error || 'Withdrawal failed.');
+      }
+    } catch {
+      toast.error('Withdrawal request failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [selectedBank, accountName, accountNumber, amount, available, onDone]);
+
+  return (
+    <div
+      style={{
+        background: 'var(--bam-surface)',
+        border: '1px solid var(--event-gold)',
+        padding: 'var(--bam-space-xl)',
+        marginBottom: 'var(--bam-space-2xl)',
+        maxWidth: '540px',
+      }}
+    >
+      <p
+        style={{
+          fontFamily: 'var(--bam-font-mono)',
+          fontSize: 'var(--bam-t-micro)',
+          color: 'var(--bam-cream-20)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.22em',
+          margin: '0 0 var(--bam-space-md)',
+        }}
+      >
+        NEW WITHDRAWAL · AVAILABLE {formatNaira(Math.max(0, Math.round(available)))}
+      </p>
+
+      <label style={fieldLabel}>Destination Bank</label>
+      <select
+        value={bankCode}
+        onChange={(e) => setBankCode(e.target.value)}
+        style={{ ...field, appearance: 'none' }}
+      >
+        <option value="">Select bank…</option>
+        {banks.map((b) => (
+          <option key={b.bankCode} value={b.bankCode}>
+            {b.bankName}
+          </option>
+        ))}
+      </select>
+
+      <label style={fieldLabel}>Account Number</label>
+      <input
+        type="text"
+        inputMode="numeric"
+        maxLength={10}
+        value={accountNumber}
+        onChange={(e) => setAccountNumber(e.target.value.replace(/\D/g, ''))}
+        placeholder="10-digit account number"
+        style={field}
+      />
+
+      <button onClick={resolveName} disabled={resolving} style={{ ...ghostBtn, width: '100%', marginBottom: 'var(--bam-space-md)' }}>
+        {resolving ? 'VERIFYING…' : 'VERIFY ACCOUNT NAME'}
+      </button>
+
+      {accountName && (
+        <div
+          style={{
+            background: 'var(--bam-surface-2)',
+            border: '1px solid var(--bam-border)',
+            padding: 'var(--bam-space-md)',
+            marginBottom: 'var(--bam-space-md)',
+          }}
+        >
+          <span style={fieldLabel}>Account Name</span>
+          <p style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.9rem', color: 'var(--bam-cream)', margin: 0 }}>
+            {accountName}
+          </p>
+        </div>
+      )}
+
+      <label style={fieldLabel}>Amount (₦)</label>
+      <input
+        type="number"
+        min={1}
+        max={available}
+        value={amount || ''}
+        onChange={(e) => setAmount(Math.max(0, Number(e.target.value)))}
+        placeholder="Amount to withdraw"
+        style={{ ...field, marginBottom: 'var(--bam-space-lg)' }}
+      />
+
+      <button
+        onClick={submit}
+        disabled={submitting || !accountName}
+        style={{
+          width: '100%',
+          padding: '16px',
+          background: 'var(--bam-red)',
+          border: 'none',
+          borderRadius: 0,
+          color: 'var(--bam-cream)',
+          fontFamily: 'var(--bam-font-mono)',
+          fontSize: '0.75rem',
+          textTransform: 'uppercase',
+          letterSpacing: '0.20em',
+          cursor: submitting || !accountName ? 'not-allowed' : 'pointer',
+          opacity: submitting || !accountName ? 0.6 : 1,
+        }}
+      >
+        {submitting ? 'SENDING…' : 'SEND WITHDRAWAL →'}
+      </button>
+    </div>
+  );
+}
+
+// ─── Shared styles ───────────────────────────────────────────────────────────
+
+const ghostBtn: React.CSSProperties = {
+  background: 'var(--bam-surface)',
+  border: '1px solid var(--bam-border)',
+  borderRadius: 0,
+  color: 'var(--bam-cream-60)',
+  fontFamily: 'var(--bam-font-mono)',
+  fontSize: 'var(--bam-t-micro)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.15em',
+  padding: '8px 16px',
+  cursor: 'pointer',
+  transition: 'border-color 0.15s ease',
+};
+
+const cellStyle: React.CSSProperties = {
+  fontFamily: 'var(--bam-font-mono)',
+  fontSize: '0.8rem',
+  color: 'var(--bam-cream-80)',
+  wordBreak: 'break-word',
+  paddingRight: '8px',
+};
+
+const fieldLabel: React.CSSProperties = {
+  fontFamily: 'var(--bam-font-mono)',
+  fontSize: 'var(--bam-t-micro)',
+  color: 'var(--bam-cream-40)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.15em',
+  display: 'block',
+  marginBottom: '8px',
+};
+
+const field: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  background: 'var(--bam-surface-2)',
+  border: '1px solid var(--bam-border)',
+  borderRadius: 0,
+  color: 'var(--bam-cream-80)',
+  fontFamily: 'var(--bam-font-mono)',
+  fontSize: '0.875rem',
+  padding: '12px 16px',
+  outline: 'none',
+  marginBottom: 'var(--bam-space-md)',
+};
