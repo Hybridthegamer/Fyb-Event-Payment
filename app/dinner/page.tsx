@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
@@ -12,7 +12,7 @@ import {
   Registration,
   PaymentRecord,
 } from '@/lib/firestoreHelpers';
-import { formatNaira, getMatricLast4, calculateFossaPayFee } from '@/lib/utils';
+import { formatNaira, getMatricLast4 } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import Navbar from '@/components/Navbar';
 import PaymentStepper from '@/components/PaymentStepper';
@@ -82,8 +82,6 @@ export default function DinnerPage() {
   const [copiedRef, setCopiedRef] = useState(false);
   const [account, setAccount] = useState<AccountDetails | null>(null);
 
-  const ticketRefs = useRef<HTMLDivElement[]>([]);
-
   const plusOneTotal = useMemo(
     () => (hasPlusOnes ? numPlusOnes * PLUS_ONE_AMOUNT : 0),
     [hasPlusOnes, numPlusOnes]
@@ -112,7 +110,7 @@ export default function DinnerPage() {
           } else if (reg.paymentStatus === 'partial') {
             setIsReturningPartial(true);
             const remaining = reg.totalAmount - reg.amountPaid;
-            setContinuePayAmount(Math.min(remaining, remaining));
+            setContinuePayAmount(remaining);
             setStep(3);
           } else {
             setFullName(reg.fullName);
@@ -144,12 +142,12 @@ export default function DinnerPage() {
     setInstalmentAmount(minInstalment);
   }, [minInstalment]);
 
-  // Fetch the single shared FossaPay account shown to every student.
+  // Fetch the static shared account shown to every student.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/fossapay/account');
+        const res = await fetch('/api/payment/account');
         if (!res.ok) return;
         const data = (await res.json()) as AccountDetails;
         if (!cancelled) setAccount(data);
@@ -199,8 +197,7 @@ export default function DinnerPage() {
         plusOneAmount: plusOneAmt,
         totalAmount: total,
       });
-      // Load the saved registration so the bank-transfer screen (which is
-      // guarded by `reg`) renders for first-time registrants too.
+      // Load the saved registration so the bank-transfer screen renders for first-time registrants too.
       const saved = await getRegistration(user.uid);
       if (saved) setExistingReg(saved);
       toast.success('Registration saved.');
@@ -212,23 +209,18 @@ export default function DinnerPage() {
     }
   }, [user, paymentMode, instalmentAmount, minInstalment, hasPlusOnes, numPlusOnes, plusOneNames, fullName, matricNumber]);
 
-  // ─── FOSSAPAY PAYMENT CONFIRMATION ────────────────────────
-  // `ticketAmount` is the portion that counts toward the student's ticket
-  // balance. The student transfers ticketAmount + FossaPay fee; we verify the
-  // transfer landed in the shared account, then record it.
+  // ─── PAYMENT CONFIRMATION ────────────────────────────────────
   const handlePayment = useCallback(
     async (ticketAmount: number): Promise<void> => {
       if (!user || processingPayment) return;
-      const fee = calculateFossaPayFee(ticketAmount);
-      const transferTotal = ticketAmount + fee;
       const reference = `NACOS-FYB-${getMatricLast4(existingReg?.matricNumber ?? matricNumber)}`;
 
       setProcessingPayment(true);
       try {
-        const res = await fetch('/api/fossapay/verify', {
+        const res = await fetch('/api/payment/verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reference, amount: transferTotal }),
+          body: JSON.stringify({ reference, amount: ticketAmount }),
         });
         const result = await res.json();
 
@@ -249,7 +241,6 @@ export default function DinnerPage() {
           reference,
           amount: ticketAmount,
           type: mode,
-          fee,
         };
 
         await recordPayment(user.uid, paymentEntry, newAmountPaid, total);
@@ -261,7 +252,7 @@ export default function DinnerPage() {
             name: existingReg?.fullName ?? fullName,
             matric: existingReg?.matricNumber ?? matricNumber,
             amount: ticketAmount,
-            fee,
+            fee: 0,
             reference,
             type: mode,
           });
@@ -291,7 +282,7 @@ export default function DinnerPage() {
     },
     [user, processingPayment, existingReg, matricNumber, fullName, totalAmount]
   );
-  // ──────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
 
   const handleDownloadAll = useCallback(async () => {
     if (!existingReg) return;
@@ -343,13 +334,7 @@ export default function DinnerPage() {
   const regTotalAmount = reg?.totalAmount ?? totalAmount;
   const regAmountPaid = reg?.amountPaid ?? 0;
   const regRemaining = regTotalAmount - regAmountPaid;
-  // Ticket portion the student is paying this round.
   const amountToPayNow = paymentMode === 'full' ? (reg?.totalAmount ?? totalAmount) : instalmentAmount;
-  // FossaPay fee the student covers, and the total they actually transfer.
-  const feeNow = calculateFossaPayFee(amountToPayNow);
-  const transferTotalNow = amountToPayNow + feeNow;
-  const continueFee = calculateFossaPayFee(continuePayAmount);
-  const continueTransferTotal = continuePayAmount + continueFee;
   const refCode = `NACOS-FYB-${getMatricLast4(reg?.matricNumber ?? matricNumber)}`;
   const stepLabel = `0${step} / 04`;
 
@@ -643,17 +628,6 @@ export default function DinnerPage() {
                   }}
                 >
                   {formatNaira(totalAmount)}
-                </p>
-                <p
-                  style={{
-                    fontFamily: 'var(--bam-font-mono)',
-                    fontSize: 'var(--bam-t-micro)',
-                    color: 'var(--bam-cream-40)',
-                    letterSpacing: '0.05em',
-                    marginTop: '8px',
-                  }}
-                >
-                  A small FossaPay processing fee is added to your transfer at payment.
                 </p>
               </div>
 
@@ -954,7 +928,7 @@ export default function DinnerPage() {
                   {account?.accountName ?? 'Fyb Dinner Night.'}
                 </p>
 
-                <FeeBreakdown ticketAmount={amountToPayNow} fee={feeNow} total={transferTotalNow} />
+                <TransferAmount amount={amountToPayNow} />
 
                 <button
                   onClick={handleCopyAccount}
@@ -1109,7 +1083,7 @@ export default function DinnerPage() {
                 </div>
                 <p style={{ fontFamily: 'var(--bam-font-serif)', fontSize: '2.5rem', color: 'var(--bam-cream)', letterSpacing: '0.05em', margin: '0 0 8px', fontWeight: 400, textAlign: 'center' }}>{account?.accountNumber ?? '…'}</p>
                 <p style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.875rem', color: 'var(--bam-cream-80)', textAlign: 'center', marginBottom: '12px' }}>{account?.accountName ?? 'Fyb Dinner Night.'}</p>
-                <FeeBreakdown ticketAmount={continuePayAmount} fee={continueFee} total={continueTransferTotal} />
+                <TransferAmount amount={continuePayAmount} />
                 <button onClick={handleCopyAccount} className="w-full" style={{ background: 'var(--bam-surface-2)', border: `1px solid ${copiedAccount ? 'var(--bam-cream-40)' : 'var(--bam-border)'}`, borderRadius: 0, color: 'var(--bam-cream)', fontFamily: 'var(--bam-font-mono)', fontSize: 'var(--bam-t-micro)', textTransform: 'uppercase', letterSpacing: '0.15em', padding: '10px', cursor: 'pointer', transition: 'border-color 0.15s ease' }}>
                   {copiedAccount ? 'COPIED ✓' : 'COPY ACCOUNT NUMBER'}
                 </button>
@@ -1249,7 +1223,7 @@ export default function DinnerPage() {
                   variant="partial"
                   onPayBalance={() => {
                     setIsReturningPartial(true);
-                    setContinuePayAmount(Math.min(regRemaining, regRemaining));
+                    setContinuePayAmount(regRemaining);
                     setStep(3);
                   }}
                 />
@@ -1335,33 +1309,7 @@ export default function DinnerPage() {
 
 // ── Sub-components ──
 
-function FeeBreakdown({
-  ticketAmount,
-  fee,
-  total,
-}: {
-  ticketAmount: number;
-  fee: number;
-  total: number;
-}) {
-  const rowStyle: React.CSSProperties = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginBottom: '4px',
-  };
-  const labelS: React.CSSProperties = {
-    fontFamily: 'var(--bam-font-mono)',
-    fontSize: 'var(--bam-t-micro)',
-    color: 'var(--bam-cream-40)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.15em',
-  };
-  const valueS: React.CSSProperties = {
-    fontFamily: 'var(--bam-font-mono)',
-    fontSize: '0.8rem',
-    color: 'var(--bam-cream-80)',
-  };
+function TransferAmount({ amount }: { amount: number }) {
   return (
     <div
       style={{
@@ -1369,30 +1317,32 @@ function FeeBreakdown({
         border: '1px solid var(--bam-border)',
         padding: 'var(--bam-space-md)',
         marginBottom: 'var(--bam-space-md)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
       }}
     >
-      <div style={rowStyle}>
-        <span style={labelS}>Ticket amount</span>
-        <span style={valueS}>{formatNaira(ticketAmount)}</span>
-      </div>
-      <div style={rowStyle}>
-        <span style={labelS}>Processing fee</span>
-        <span style={valueS}>{formatNaira(fee)}</span>
-      </div>
-      <div style={{ height: '1px', background: 'var(--bam-border)', margin: '8px 0' }} />
-      <div style={{ ...rowStyle, marginBottom: 0 }}>
-        <span style={{ ...labelS, color: 'var(--bam-cream-60)' }}>Transfer exactly</span>
-        <span
-          style={{
-            fontFamily: 'var(--bam-font-serif)',
-            fontSize: '1.4rem',
-            color: 'var(--event-gold)',
-            fontWeight: 400,
-          }}
-        >
-          {formatNaira(total)}
-        </span>
-      </div>
+      <span
+        style={{
+          fontFamily: 'var(--bam-font-mono)',
+          fontSize: 'var(--bam-t-micro)',
+          color: 'var(--bam-cream-60)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.15em',
+        }}
+      >
+        Transfer exactly
+      </span>
+      <span
+        style={{
+          fontFamily: 'var(--bam-font-serif)',
+          fontSize: '1.4rem',
+          color: 'var(--event-gold)',
+          fontWeight: 400,
+        }}
+      >
+        {formatNaira(amount)}
+      </span>
     </div>
   );
 }
