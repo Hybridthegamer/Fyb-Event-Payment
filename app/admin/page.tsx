@@ -15,10 +15,20 @@ import {
 
 const ADMIN_PIN = '2880';
 
-interface Bank {
-  bankName: string;
-  bankCode: string;
-}
+const NIGERIAN_BANKS = [
+  { bankName: 'ACCESS BANK', bankCode: '044' },
+  { bankName: 'FIRST BANK OF NIGERIA', bankCode: '011' },
+  { bankName: 'GTBANK', bankCode: '058' },
+  { bankName: 'KUDA MICROFINANCE BANK', bankCode: '50211' },
+  { bankName: 'MONIEPOINT MICROFINANCE BANK', bankCode: '50515' },
+  { bankName: 'OPAY', bankCode: '999992' },
+  { bankName: 'PALMPAY', bankCode: '999991' },
+  { bankName: 'POLARIS BANK', bankCode: '076' },
+  { bankName: 'STERLING BANK', bankCode: '232' },
+  { bankName: 'UNITED BANK FOR AFRICA', bankCode: '033' },
+  { bankName: 'WEMA BANK', bankCode: '035' },
+  { bankName: 'ZENITH BANK', bankCode: '057' },
+];
 
 type LedgerRow =
   | ({ kind: 'deposit' } & BankDepositEntry)
@@ -163,18 +173,13 @@ function AdminGate() {
 
 function AdminDashboard() {
   const [ledger, setLedger] = useState<BankLedger | null>(null);
-  const [liveBalance, setLiveBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [showWithdraw, setShowWithdraw] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const [l, balRes] = await Promise.all([
-        getBankLedger(),
-        fetch('/api/fossapay/balance').then((r) => r.json()).catch(() => ({ available: null })),
-      ]);
+      const l = await getBankLedger();
       setLedger(l);
-      setLiveBalance(typeof balRes?.available === 'number' ? balRes.available : null);
     } catch {
       toast.error('Failed to load bank data.');
     } finally {
@@ -188,8 +193,7 @@ function AdminDashboard() {
 
   const totalDeposits = ledger?.totalDeposits ?? 0;
   const totalWithdrawals = ledger?.totalWithdrawals ?? 0;
-  const ledgerBalance = totalDeposits - totalWithdrawals;
-  const balance = liveBalance ?? ledgerBalance;
+  const balance = totalDeposits - totalWithdrawals;
 
   const rows: LedgerRow[] = useMemo(() => {
     if (!ledger) return [];
@@ -218,7 +222,7 @@ function AdminDashboard() {
     const header = 'Type,Party,Amount,Fee,Reference,Status,Date';
     const lines = rows.map((r) => {
       if (r.kind === 'deposit') {
-        return `Deposit,${r.name} (${r.matric}),${r.amount},${r.fee},${r.reference},completed,${fmtDate(r)}`;
+        return `Deposit,${r.name} (${r.matric}),${r.amount},${r.fee ?? 0},${r.reference},completed,${fmtDate(r)}`;
       }
       return `Withdrawal,${r.accountName} (${r.bankName} ${r.accountNumber}),${r.amount},0,${r.reference},${r.status},${fmtDate(r)}`;
     });
@@ -265,7 +269,7 @@ function AdminDashboard() {
                 margin: '0 0 4px',
               }}
             >
-              FYB DINNER NIGHT · FOSSAPAY
+              FYB DINNER NIGHT
             </p>
             <h1
               style={{
@@ -415,56 +419,21 @@ function AdminDashboard() {
 // ─── Withdrawal panel ────────────────────────────────────────────────────────
 
 function WithdrawPanel({ available, onDone }: { available: number; onDone: () => void }) {
-  const [banks, setBanks] = useState<Bank[]>([]);
   const [bankCode, setBankCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountName, setAccountName] = useState('');
   const [amount, setAmount] = useState(0);
-  const [resolving, setResolving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    fetch('/api/fossapay/banks')
-      .then((r) => r.json())
-      .then((d) => setBanks(d.banks ?? []))
-      .catch(() => setBanks([]));
-  }, []);
+  const selectedBank = NIGERIAN_BANKS.find((b) => b.bankCode === bankCode);
 
-  const selectedBank = banks.find((b) => b.bankCode === bankCode);
-
-  // Reset the resolved name whenever the destination changes.
   useEffect(() => {
     setAccountName('');
   }, [bankCode, accountNumber]);
 
-  const resolveName = useCallback(async () => {
-    if (!bankCode || accountNumber.length < 10) {
-      toast.error('Select a bank and enter a valid 10-digit account number.');
-      return;
-    }
-    setResolving(true);
-    try {
-      const res = await fetch('/api/fossapay/name-enquiry', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bankCode, accountNumber, bankName: selectedBank?.bankName }),
-      });
-      const data = await res.json();
-      if (data.success && data.accountName) {
-        setAccountName(data.accountName);
-      } else {
-        toast.error(data.error || 'Could not resolve account name.');
-      }
-    } catch {
-      toast.error('Account name enquiry failed.');
-    } finally {
-      setResolving(false);
-    }
-  }, [bankCode, accountNumber, selectedBank]);
-
   const submit = useCallback(async () => {
-    if (!selectedBank || !accountName || accountNumber.length < 10) {
-      toast.error('Verify the destination account first.');
+    if (!selectedBank || !accountName.trim() || accountNumber.length < 10) {
+      toast.error('Fill in all destination account details.');
       return;
     }
     if (amount <= 0) {
@@ -477,38 +446,20 @@ function WithdrawPanel({ available, onDone }: { available: number; onDone: () =>
     }
     setSubmitting(true);
     try {
-      const res = await fetch('/api/fossapay/transfer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bankCode: selectedBank.bankCode,
-          bankName: selectedBank.bankName,
-          accountNumber,
-          accountName,
-          amount,
-          remarks: 'FYB Dinner Night withdrawal',
-        }),
-      });
-      const data = await res.json();
-
+      const reference = `WTH-${Date.now()}`;
       await recordBankWithdrawal({
-        id: `wth-${Date.now()}`,
-        accountName,
+        id: reference,
+        accountName: accountName.trim(),
         accountNumber,
         bankName: selectedBank.bankName,
         amount,
-        reference: data.reference || `WTH-${Date.now()}`,
-        status: data.success ? 'completed' : 'failed',
+        reference,
+        status: 'completed',
       });
-
-      if (data.success) {
-        toast.success(`Withdrawal of ${formatNaira(amount)} sent.`);
-        onDone();
-      } else {
-        toast.error(data.error || 'Withdrawal failed.');
-      }
+      toast.success(`Withdrawal of ${formatNaira(amount)} recorded.`);
+      onDone();
     } catch {
-      toast.error('Withdrawal request failed.');
+      toast.error('Failed to record withdrawal.');
     } finally {
       setSubmitting(false);
     }
@@ -544,7 +495,7 @@ function WithdrawPanel({ available, onDone }: { available: number; onDone: () =>
         style={{ ...field, appearance: 'none' }}
       >
         <option value="">Select bank…</option>
-        {banks.map((b) => (
+        {NIGERIAN_BANKS.map((b) => (
           <option key={b.bankCode} value={b.bankCode}>
             {b.bankName}
           </option>
@@ -562,25 +513,14 @@ function WithdrawPanel({ available, onDone }: { available: number; onDone: () =>
         style={field}
       />
 
-      <button onClick={resolveName} disabled={resolving} style={{ ...ghostBtn, width: '100%', marginBottom: 'var(--bam-space-md)' }}>
-        {resolving ? 'VERIFYING…' : 'VERIFY ACCOUNT NAME'}
-      </button>
-
-      {accountName && (
-        <div
-          style={{
-            background: 'var(--bam-surface-2)',
-            border: '1px solid var(--bam-border)',
-            padding: 'var(--bam-space-md)',
-            marginBottom: 'var(--bam-space-md)',
-          }}
-        >
-          <span style={fieldLabel}>Account Name</span>
-          <p style={{ fontFamily: 'var(--bam-font-mono)', fontSize: '0.9rem', color: 'var(--bam-cream)', margin: 0 }}>
-            {accountName}
-          </p>
-        </div>
-      )}
+      <label style={fieldLabel}>Account Name</label>
+      <input
+        type="text"
+        value={accountName}
+        onChange={(e) => setAccountName(e.target.value)}
+        placeholder="Destination account holder name"
+        style={{ ...field, marginBottom: 'var(--bam-space-md)' }}
+      />
 
       <label style={fieldLabel}>Amount (₦)</label>
       <input
@@ -595,7 +535,7 @@ function WithdrawPanel({ available, onDone }: { available: number; onDone: () =>
 
       <button
         onClick={submit}
-        disabled={submitting || !accountName}
+        disabled={submitting || !accountName.trim()}
         style={{
           width: '100%',
           padding: '16px',
@@ -607,11 +547,11 @@ function WithdrawPanel({ available, onDone }: { available: number; onDone: () =>
           fontSize: '0.75rem',
           textTransform: 'uppercase',
           letterSpacing: '0.20em',
-          cursor: submitting || !accountName ? 'not-allowed' : 'pointer',
-          opacity: submitting || !accountName ? 0.6 : 1,
+          cursor: submitting || !accountName.trim() ? 'not-allowed' : 'pointer',
+          opacity: submitting || !accountName.trim() ? 0.6 : 1,
         }}
       >
-        {submitting ? 'SENDING…' : 'SEND WITHDRAWAL →'}
+        {submitting ? 'RECORDING…' : 'RECORD WITHDRAWAL →'}
       </button>
     </div>
   );

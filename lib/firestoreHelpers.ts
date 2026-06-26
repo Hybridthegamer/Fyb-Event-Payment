@@ -15,7 +15,7 @@ export interface PaymentRecord {
   amount: number;
   paidAt: Timestamp;
   type: 'full' | 'instalment';
-  /** FossaPay processing fee the student covered on top of the ticket amount. */
+  /** Processing fee covered by the student on top of the ticket amount. */
   fee?: number;
 }
 

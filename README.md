@@ -9,7 +9,6 @@ A student-facing payment portal for the National Association of Computing Studen
 - **Framework**: Next.js 14 (App Router)
 - **Auth**: Firebase Authentication (Google Sign-In)
 - **Database**: Firebase Firestore
-- **Payments**: FossaPay (bank transfer collections + payouts)
 - **Ticket generation**: html2canvas
 - **Styling**: Tailwind CSS
 - **Deployment**: Vercel
@@ -47,7 +46,7 @@ service cloud.firestore {
 
 ### 3. Configure environment variables
 
-Open `.env.local` and replace all placeholders:
+Create `.env.local` and fill in the values:
 
 ```env
 NEXT_PUBLIC_FIREBASE_API_KEY=your_actual_api_key
@@ -57,29 +56,11 @@ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
 NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abc123
 
-# ── FossaPay (payments) ──────────────────────────────────────
-# Secret key from dashboard.fossapay.com → Settings → API Keys
-# (fp_test_sk_* for testing, fp_live_sk_* for production).
-FOSSAPAY_SECRET_KEY=fp_live_sk_xxxxxxxx
-# Secret used to verify inbound webhook signatures.
-FOSSAPAY_WEBHOOK_SECRET=your-webhook-secret
-
-# The single shared account shown to every student. Provision once, then pin
-# the ids here so the app never re-creates the wallet:
-FOSSAPAY_CUSTOMER_ID=
-FOSSAPAY_WALLET_ID=
-# Optional overrides:
-# FOSSAPAY_WALLET_REFERENCE=nacos-fyb-dinner-night
-# FOSSAPAY_CUSTOMER_EMAIL=fybdinnernight@nacosrsu.events
-# FOSSAPAY_BASE_URL=https://api-production.fossapay.com/api/v1
-# ────────────────────────────────────────────────────────────
+# ── Payment bank account (shown to every student on the payment screen) ──
+PAYMENT_ACCOUNT_NUMBER=0000000000
+PAYMENT_BANK_NAME=Your Bank Name
+PAYMENT_ACCOUNT_NAME=Fyb Dinner Night.
 ```
-
-> **Simulation mode:** With no `FOSSAPAY_SECRET_KEY` set, the payment + bank
-> flows run in a safe simulated mode (account details, payment confirmation,
-> bank list, name enquiry, withdrawals) so the whole UX can be exercised
-> without moving real money. Add a real key to switch to live processing — no
-> code changes required.
 
 ### 4. Run locally
 
@@ -100,40 +81,13 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Payment Integration (FossaPay)
+## Payment Flow
 
-Payments run on [FossaPay](https://docs.fossapay.com) — bank-transfer
-collections for student payments and inter-bank transfers for admin payouts.
+Payments use a **manual bank transfer** model:
 
-**How it works**
-
-- A **single shared fiat account** (account name **"Fyb Dinner Night."**) is
-  displayed to every student on the bank-transfer screen. It is provisioned
-  once via the FossaPay API (`/api/fossapay/account`); pin
-  `FOSSAPAY_WALLET_ID` / `FOSSAPAY_CUSTOMER_ID` after the first run.
-- Students cover the **FossaPay processing fee**, added on top of their ticket
-  amount at transfer time:
-
-  | Amount transferred | Fee |
-  | --- | --- |
-  | below ₦5,000 | ₦60 |
-  | ₦5,000 – ₦9,999 | ₦120 |
-  | ₦10,000 – ₦14,999 | ₦200 |
-  | ₦15,000 – ₦24,999 | ₦250 |
-  | ₦25,000 and above | 1.2% (capped at ₦1,000) |
-
-- After paying, students see a **receipt**. Part payment → receipt only;
-  full payment → receipt **and** ticket(s). Both are downloadable.
-- The **admin dashboard** (`/admin`, PIN **2880**) is a full bank: every
-  student payment is a deposit and every payout a withdrawal, both reflected in
-  the displayed balance. Withdrawals use FossaPay's supported-banks list, name
-  enquiry, and inter-bank transfer.
-
-**API routes** (`app/api/fossapay/`): `account`, `verify`, `banks`,
-`name-enquiry`, `transfer`, `balance`, `webhook`.
-
-**Webhook:** point your FossaPay webhook at `/api/fossapay/webhook`. Signatures
-are verified with `FOSSAPAY_WEBHOOK_SECRET` (HMAC-SHA256).
+- A **single shared bank account** (configured via `PAYMENT_ACCOUNT_NUMBER` / `PAYMENT_BANK_NAME` / `PAYMENT_ACCOUNT_NAME` env vars) is displayed to every student on the bank-transfer screen.
+- Students transfer the exact ticket amount and click **Confirm Payment**. The payment is recorded in Firestore and the student receives a receipt or ticket.
+- The **admin dashboard** (`/admin`, PIN **2880**) displays the full transaction ledger (deposits + withdrawals) and allows manual withdrawal recording.
 
 ---
 
@@ -159,8 +113,7 @@ app/
   dinner/page.tsx       → FYB Dinner Night (4-step flow)
   pool-party/page.tsx   → Coming Soon
   admin/page.tsx        → Admin bank dashboard (PIN 2880)
-  api/fossapay/         → FossaPay routes (account, verify, banks,
-                          name-enquiry, transfer, balance, webhook)
+  api/payment/          → Payment routes (account, verify)
 
 components/
   AuthGuard.tsx         → Auth protection wrapper
@@ -173,6 +126,5 @@ components/
 lib/
   firebase.ts           → Firebase init
   firestoreHelpers.ts   → Firestore CRUD helpers + bank ledger
-  fossapay.ts           → FossaPay server-side client (server-only)
-  utils.ts              → formatNaira, getMatricLast4, fee calculation
+  utils.ts              → formatNaira, getMatricLast4
 ```
